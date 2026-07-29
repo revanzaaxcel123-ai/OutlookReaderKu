@@ -29,10 +29,17 @@ export function useGraph() {
             return token
         }
 
+        let exchangeError: string | null = null
+
         globalRefreshPromise = exchangeRefreshToken(account).then(resp => {
+            if (resp.refreshToken && resp.refreshToken !== account.refreshToken) {
+                // Update active vault account with newly issued refresh token
+                useVaultStore.getState().updateAccountRefreshToken(activeAccountId, resp.refreshToken)
+            }
             return resp.accessToken
         }).catch(err => {
-            console.error("Token exchange failed", err)
+            exchangeError = err.message || "Token exchange failed"
+            console.error("Token exchange failed:", err)
             return null
         })
 
@@ -42,7 +49,7 @@ export function useGraph() {
         if (token) {
             setActiveAccessToken(token)
         } else {
-            toast.error("Session expired. Please re-authenticate your account.")
+            toast.error(exchangeError || "Session expired. Please check account credentials.")
         }
         return token
     }, [activeAccountId, decryptedAccounts, activeAccessToken])
@@ -80,17 +87,23 @@ export function useGraph() {
     )
 
     const getInbox = useCallback(
-        async (nextLink?: string): Promise<InboxResponse | null> => {
-            return graphCallWithRetry((token) => fetchInbox(token, nextLink))
+        async (_nextLink?: string): Promise<InboxResponse | null> => {
+            if (!activeAccountId) return null
+            const account = decryptedAccounts[activeAccountId]
+            if (!account) return null
+            return graphCallWithRetry((token) => fetchInbox(account.email, token))
         },
-        [graphCallWithRetry]
+        [activeAccountId, decryptedAccounts, graphCallWithRetry]
     )
 
     const getMessageDetail = useCallback(
         async (messageId: string): Promise<MessageDetail | null> => {
-            return graphCallWithRetry((token) => fetchMessageDetail(token, messageId))
+            if (!activeAccountId) return null
+            const account = decryptedAccounts[activeAccountId]
+            if (!account) return null
+            return graphCallWithRetry((token) => fetchMessageDetail(account.email, token, messageId))
         },
-        [graphCallWithRetry]
+        [activeAccountId, decryptedAccounts, graphCallWithRetry]
     )
 
     const resetSession = useCallback(() => {

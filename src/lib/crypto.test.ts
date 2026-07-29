@@ -5,6 +5,7 @@ import type { ParsedCredential } from "./validation"
 describe("Web Crypto Vault functions", () => {
     const mockCred: ParsedCredential = {
         email: "test@example.com",
+        password: "secretpassword",
         passwordIgnored: true,
         refreshToken: "eyRefresh.Token.Data",
         clientId: "azure-client-id"

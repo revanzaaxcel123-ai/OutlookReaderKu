@@ -4,15 +4,70 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Shield, Lock, Unlock, KeyRound, Plus, Trash2, Github, EyeOff, Server } from "lucide-react"
+import { Shield, Lock, Unlock, KeyRound, Plus, Trash2, Github, EyeOff, Server, Copy, Download } from "lucide-react"
 import { toast } from "sonner"
 
+async function copyToClipboard(text: string): Promise<boolean> {
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text)
+            return true
+        }
+    } catch {
+        // Fallback for non-secure contexts or unfocused windows
+    }
+
+    try {
+        const textarea = document.createElement("textarea")
+        textarea.value = text
+        textarea.style.position = "fixed"
+        textarea.style.left = "-9999px"
+        textarea.style.top = "-9999px"
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        const successful = document.execCommand("copy")
+        document.body.removeChild(textarea)
+        return successful
+    } catch {
+        return false
+    }
+}
+
 export function VaultManager() {
-    const { hasVault, isLocked, accounts, initializeVault, unlockVault, lockVault, addAccount, removeAccount } = useVaultStore()
+    const { hasVault, isLocked, accounts, initializeVault, unlockVault, lockVault, addAccount, removeAccount, getExportString } = useVaultStore()
     const [passphrase, setPassphrase] = useState("")
     const [isEphemeral, setIsEphemeral] = useState(false)
     const [newCreds, setNewCreds] = useState("")
     const [loading, setLoading] = useState(false)
+
+    const handleCopySingle = async (accountId: string) => {
+        const str = getExportString(accountId)
+        if (str) {
+            const ok = await copyToClipboard(str)
+            if (ok) {
+                toast.success("Account credential copied to clipboard")
+            } else {
+                toast.error("Failed to copy to clipboard")
+            }
+        } else {
+            toast.error("Account details not available in session")
+        }
+    }
+
+    const handleExportAll = async () => {
+        const str = getExportString()
+        if (str) {
+            const ok = await copyToClipboard(str)
+            if (ok) {
+                toast.success(`${accounts.length} account credential(s) copied to clipboard`)
+            } else {
+                toast.error("Failed to copy to clipboard")
+            }
+        } else {
+            toast.error("No accounts available to export")
+        }
+    }
 
     const handleUnlock = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -39,7 +94,7 @@ export function VaultManager() {
 
     const handleAddAccount = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!newCreds.includes(":")) return toast.error("Invalid credential format")
+        if (!newCreds.includes(":") && !newCreds.includes("|")) return toast.error("Invalid credential format")
         if (isLocked) return toast.error("Unlock vault first")
 
         setLoading(true)
@@ -179,21 +234,29 @@ export function VaultManager() {
                             <p className="text-sm text-muted-foreground mt-0.5">Your accounts are currently decrypted in memory.</p>
                         </div>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => {
-                        lockVault()
-                        setPassphrase("")
-                        toast.info("Vault locked securely")
-                    }} className="shrink-0 rounded-full h-9 px-4 hidden sm:flex">
-                        <Lock className="w-4 h-4 mr-2" />
-                        Lock Vault
-                    </Button>
-                    <Button variant="outline" size="icon" onClick={() => {
-                        lockVault()
-                        setPassphrase("")
-                        toast.info("Vault locked securely")
-                    }} className="shrink-0 sm:hidden rounded-full">
-                        <Lock className="w-4 h-4" />
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        {accounts.length > 0 && (
+                            <Button variant="outline" size="sm" onClick={handleExportAll} className="rounded-full h-9 px-3">
+                                <Download className="w-4 h-4 mr-2" />
+                                Export All
+                            </Button>
+                        )}
+                        <Button variant="outline" size="sm" onClick={() => {
+                            lockVault()
+                            setPassphrase("")
+                            toast.info("Vault locked securely")
+                        }} className="shrink-0 rounded-full h-9 px-4 hidden sm:flex">
+                            <Lock className="w-4 h-4 mr-2" />
+                            Lock Vault
+                        </Button>
+                        <Button variant="outline" size="icon" onClick={() => {
+                            lockVault()
+                            setPassphrase("")
+                            toast.info("Vault locked securely")
+                        }} className="shrink-0 sm:hidden rounded-full">
+                            <Lock className="w-4 h-4" />
+                        </Button>
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-8">
@@ -223,9 +286,14 @@ export function VaultManager() {
                                                 </div>
                                                 <span className="font-medium text-sm truncate">{acc.email}</span>
                                             </div>
-                                            <Button variant="ghost" size="sm" onClick={() => removeAccount(acc.id)} className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0">
-                                                <Trash2 className="w-4 h-4" />
-                                            </Button>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                <Button variant="ghost" size="sm" onClick={() => handleCopySingle(acc.id)} title="Copy credential string" className="h-8 px-2 text-muted-foreground hover:text-foreground">
+                                                    <Copy className="w-4 h-4" />
+                                                </Button>
+                                                <Button variant="ghost" size="sm" onClick={() => removeAccount(acc.id)} title="Delete account" className="h-8 px-2 text-destructive hover:text-destructive hover:bg-destructive/10">
+                                                    <Trash2 className="w-4 h-4" />
+                                                </Button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>

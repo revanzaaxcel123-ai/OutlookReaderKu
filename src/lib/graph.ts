@@ -30,23 +30,20 @@ export interface MessageDetail {
     bodyHtmlSanitized?: string // populated by UI
 }
 
-const GRAPH_BASE = import.meta.env.VITE_GRAPH_BASE_URL || "https://graph.microsoft.com/v1.0"
 const USE_PROXY = import.meta.env.VITE_USE_OAUTH_PROXY === "true" || (import.meta.env.DEV && import.meta.env.VITE_USE_OAUTH_PROXY !== "false")
-const TOKEN_URL = USE_PROXY ? "/api/token" : (import.meta.env.VITE_TOKEN_URL || "https://login.microsoftonline.com/common/oauth2/v2.0/token")
+const LIVE_TOKEN_URL = USE_PROXY ? "/api/token" : (import.meta.env.VITE_TOKEN_URL || "https://login.live.com/oauth20_token.srf")
 
 /**
- * Exchanges the refresh token for a new access token.
- * Warning: This endpoint must allow SPA/CORS for the specific Client ID.
+ * Exchanges the refresh token for a new access token using the Live SDK OAuth2 endpoint.
+ * Matches Python requests.post('https://login.live.com/oauth20_token.srf', data={client_id, grant_type, refresh_token}).
  */
 export async function exchangeRefreshToken(account: ParsedCredential): Promise<TokenResponse> {
     const body = new URLSearchParams()
     body.append("client_id", account.clientId)
     body.append("grant_type", "refresh_token")
     body.append("refresh_token", account.refreshToken)
-    // Ensure we request offline_access to get another refresh token if possible
-    body.append("scope", "https://graph.microsoft.com/.default offline_access")
 
-    const res = await fetch(TOKEN_URL, {
+    const res = await fetch(LIVE_TOKEN_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -54,77 +51,60 @@ export async function exchangeRefreshToken(account: ParsedCredential): Promise<T
         body: body.toString(),
     })
 
+    const data = await res.json().catch(() => ({}))
+
     if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(`Token exchange failed: ${err.error_description || res.statusText}`)
+        const errorDesc = data.error_description || data.error || res.statusText || "Token exchange failed"
+        console.error("[OAuth Exchange Error]:", data)
+        throw new Error(errorDesc)
     }
 
-    const data = await res.json()
     return {
         accessToken: data.access_token,
         expiresIn: data.expires_in,
-        refreshToken: data.refresh_token, // typically the same for SPAs unless revoked/rolled
+        refreshToken: data.refresh_token || account.refreshToken,
     }
 }
 
-/**
- * Helper to fetch with an access token, returning the JSON response.
- */
-async function graphFetch(url: string, accessToken: string) {
-    const res = await fetch(url, {
+export async function fetchInbox(email: string, accessToken: string): Promise<InboxResponse> {
+    const res = await fetch("/api/imap/inbox", {
+        method: "POST",
         headers: {
-            Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
-            Prefer: "outlook.body-content-type=\"html\"" // Ask for HTML bodies in details
         },
+        body: JSON.stringify({ email, accessToken }),
     })
 
     if (!res.ok) {
         if (res.status === 401) {
             throw new Error("UNAUTHORIZED_ACCESS_TOKEN")
         }
-        if (res.status === 429) {
-            const retryAfter = res.headers.get("Retry-After") || 5
-            throw new Error(`GRAPH_RATE_LIMIT:${retryAfter}`)
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || "Failed to fetch IMAP inbox")
+    }
+
+    const data = await res.json()
+    return {
+        messages: data.messages,
+    }
+}
+
+export async function fetchMessageDetail(email: string, accessToken: string, messageId: string): Promise<MessageDetail> {
+    const res = await fetch("/api/imap/detail", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, accessToken, messageId }),
+    })
+
+    if (!res.ok) {
+        if (res.status === 401) {
+            throw new Error("UNAUTHORIZED_ACCESS_TOKEN")
         }
-        throw new Error(`Graph API Error: ${res.statusText || res.status}`)
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || "Failed to fetch IMAP message detail")
     }
 
     return res.json()
-}
-
-export async function fetchInbox(accessToken: string, nextLink?: string): Promise<InboxResponse> {
-    // Inbox query: Get messages, top 20, select specific fields, sort by date descending
-    const defaultUrl = `${GRAPH_BASE}/me/messages?$select=id,subject,from,bodyPreview,receivedDateTime,isRead&$top=20&$orderby=receivedDateTime DESC`
-    const url = nextLink || defaultUrl
-
-    const data = await graphFetch(url, accessToken)
-
-    const messages: InboxMessage[] = data.value.map((msg: any) => ({
-        id: msg.id,
-        subject: msg.subject || "(No Subject)",
-        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown Sender",
-        bodyPreview: msg.bodyPreview || "",
-        receivedDateTime: msg.receivedDateTime,
-        isRead: msg.isRead,
-    }))
-
-    return {
-        messages,
-        nextLink: data["@odata.nextLink"],
-    }
-}
-
-export async function fetchMessageDetail(accessToken: string, messageId: string): Promise<MessageDetail> {
-    const url = `${GRAPH_BASE}/me/messages/${messageId}?$select=id,subject,from,toRecipients,bodyPreview,body`
-    const msg = await graphFetch(url, accessToken)
-
-    return {
-        id: msg.id,
-        subject: msg.subject || "(No Subject)",
-        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown Sender",
-        toRecipients: msg.toRecipients?.map((r: any) => r.emailAddress?.address || "") || [],
-        bodyPreview: msg.bodyPreview || "",
-        bodyHtmlRaw: msg.body?.content || "",
-    }
 }

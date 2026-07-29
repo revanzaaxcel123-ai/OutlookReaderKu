@@ -60,7 +60,8 @@ const deriveKey = async (passwordKey: CryptoKey, salt: Uint8Array): Promise<Cryp
 
 export async function encryptAccount(
   record: ParsedCredential,
-  passphrase: string
+  passphrase: string,
+  existingId?: string
 ): Promise<EncryptedAccountRecord> {
   const salt = window.crypto.getRandomValues(new Uint8Array(16))
   const iv = window.crypto.getRandomValues(new Uint8Array(12))
@@ -78,7 +79,7 @@ export async function encryptAccount(
   )
 
   return {
-    id: window.crypto.randomUUID(),
+    id: existingId || window.crypto.randomUUID(),
     email: record.email,
     clientId: record.clientId,
     cipherText: bufferToBase64(encryptedContent),

@@ -12,6 +12,7 @@ interface VaultState {
 
     // Decrypted session state (never persisted)
     decryptedAccounts: Record<string, ParsedCredential>
+    sessionPassphrase: string | null
 
     // Actions
     initializeVault: (passphrase: string, ephemeral?: boolean) => Promise<boolean>
@@ -20,6 +21,8 @@ interface VaultState {
     addAccount: (credentialString: string, passphrase: string) => Promise<void>
     removeAccount: (accountId: string) => void
     setActiveAccount: (accountId: string) => void
+    updateAccountRefreshToken: (accountId: string, newRefreshToken: string) => Promise<void>
+    getExportString: (accountId?: string) => string
 }
 
 export const useVaultStore = create<VaultState>()(
@@ -31,19 +34,17 @@ export const useVaultStore = create<VaultState>()(
             accounts: [],
             activeAccountId: null,
             decryptedAccounts: {},
+            sessionPassphrase: null,
 
-            initializeVault: async (_passphrase: string, ephemeral = false) => {
-                // Just sets flags, actual encryption happens when adding accounts
-                // We verify the passphrase by attempting to decrypt when unlocking later
-                // For initialization, we just start fresh or consider it unlocked if empty
-                set({ isLocked: false, hasVault: true, isEphemeral: ephemeral })
+            initializeVault: async (passphrase: string, ephemeral = false) => {
+                set({ isLocked: false, hasVault: true, isEphemeral: ephemeral, sessionPassphrase: passphrase })
                 return true
             },
 
             unlockVault: async (passphrase: string) => {
                 const { accounts } = get()
                 if (accounts.length === 0) {
-                    set({ isLocked: false })
+                    set({ isLocked: false, sessionPassphrase: passphrase })
                     return true
                 }
 
@@ -52,7 +53,7 @@ export const useVaultStore = create<VaultState>()(
                     for (const acc of accounts) {
                         decrypted[acc.id] = await decryptAccount(acc, passphrase)
                     }
-                    set({ isLocked: false, decryptedAccounts: decrypted })
+                    set({ isLocked: false, decryptedAccounts: decrypted, sessionPassphrase: passphrase })
                     return true
                 } catch (e) {
                     return false
@@ -60,8 +61,8 @@ export const useVaultStore = create<VaultState>()(
             },
 
             lockVault: () => {
-                // Secure memory wipe of decrypted accounts
-                set({ isLocked: true, decryptedAccounts: {}, activeAccountId: null })
+                // Secure memory wipe of decrypted accounts and session passphrase
+                set({ isLocked: true, decryptedAccounts: {}, sessionPassphrase: null, activeAccountId: null })
             },
 
             addAccount: async (credentialString: string, passphrase: string) => {
@@ -74,6 +75,7 @@ export const useVaultStore = create<VaultState>()(
                     hasVault: true,
                     accounts: [...state.accounts, encrypted],
                     decryptedAccounts: { ...state.decryptedAccounts, [encrypted.id]: parsed },
+                    sessionPassphrase: passphrase,
                     activeAccountId: encrypted.id
                 }))
             },
@@ -94,7 +96,62 @@ export const useVaultStore = create<VaultState>()(
                 })
             },
 
-            setActiveAccount: (accountId: string) => set({ activeAccountId: accountId })
+            setActiveAccount: (accountId: string) => set({ activeAccountId: accountId }),
+
+            updateAccountRefreshToken: async (accountId: string, newRefreshToken: string) => {
+                const state = get()
+                if (state.isLocked) return
+
+                const currentCred = state.decryptedAccounts[accountId]
+                if (!currentCred || currentCred.refreshToken === newRefreshToken) return
+
+                const updatedCred: ParsedCredential = {
+                    ...currentCred,
+                    refreshToken: newRefreshToken,
+                }
+
+                const passphrase = state.sessionPassphrase || ""
+                const updatedAccounts = [...state.accounts]
+
+                if (passphrase) {
+                    const existingAcc = state.accounts.find((a) => a.id === accountId)
+                    if (existingAcc) {
+                        const reEncrypted = await encryptAccount(updatedCred, passphrase, accountId)
+                        const idx = updatedAccounts.findIndex((a) => a.id === accountId)
+                        if (idx !== -1) {
+                            updatedAccounts[idx] = reEncrypted
+                        }
+                    }
+                }
+
+                set((prev) => ({
+                    accounts: updatedAccounts,
+                    decryptedAccounts: {
+                        ...prev.decryptedAccounts,
+                        [accountId]: updatedCred,
+                    },
+                }))
+            },
+
+            getExportString: (accountId?: string) => {
+                const state = get()
+                if (state.isLocked) return ""
+
+                const formatAccount = (id: string) => {
+                    const cred = state.decryptedAccounts[id]
+                    if (!cred) return ""
+                    return `${cred.email}:${cred.password}:${cred.refreshToken}:${cred.clientId}`
+                }
+
+                if (accountId) {
+                    return formatAccount(accountId)
+                }
+
+                return state.accounts
+                    .map((acc) => formatAccount(acc.id))
+                    .filter(Boolean)
+                    .join("\n")
+            }
         }),
         {
             name: "outlookreader-vault",
