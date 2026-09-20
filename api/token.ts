@@ -1,5 +1,5 @@
 export default async function handler(req: Request) {
-    // Handle CORS preflight
+
     if (req.method === 'OPTIONS') {
         return new Response(null, {
             status: 204,
@@ -7,9 +7,10 @@ export default async function handler(req: Request) {
                 'Access-Control-Allow-Origin': '*',
                 'Access-Control-Allow-Methods': 'POST, OPTIONS',
                 'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-            },
+            }
         });
     }
+
 
     if (req.method !== 'POST') {
         return new Response(
@@ -18,49 +19,58 @@ export default async function handler(req: Request) {
                 status: 405,
                 headers: {
                     'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                },
+                    'Access-Control-Allow-Origin': '*'
+                }
             }
         );
     }
 
+
     try {
-        const body = await req.text();
+
+        const rawBody = await req.text();
+
 
         const tokenResponse = await fetch(
-            'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+            'https://login.live.com/oauth20_token.srf',
             {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': 'Mozilla/5.0'
                 },
-                body,
+                body: rawBody
             }
         );
 
+
         const data = await tokenResponse.json();
 
-        return new Response(JSON.stringify(data), {
-            status: tokenResponse.status,
-            headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-        });
+
+        return new Response(
+            JSON.stringify(data),
+            {
+                status: tokenResponse.status,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            }
+        );
+
 
     } catch (error) {
-        console.error(error);
 
         return new Response(
             JSON.stringify({
-                error: 'OAuth proxy failed'
+                error: 'Proxy failed to reach Live OAuth'
             }),
             {
                 status: 502,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                },
+                headers:{
+                    'Content-Type':'application/json',
+                    'Access-Control-Allow-Origin':'*'
+                }
             }
         );
     }
