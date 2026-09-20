@@ -1,57 +1,48 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Izinkan CORS
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  try {
-    const { refresh_token, client_id, scope } = req.body || {};
-
-    if (!refresh_token) {
-      return res.status(400).json({ error: 'Missing refresh_token parameter' });
+export default async function handler(req: Request) {
+    if (req.method === 'OPTIONS') {
+        return new Response(null, {
+            status: 200,
+            headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            }
+        });
     }
 
-    // Deteksi akun personal (MSA/Live.com) vs Azure AD
-    const isConsumer = refresh_token.startsWith('M.C') || refresh_token.startsWith('M.R') || client_id === '000000004017045b';
-
-    const tokenUrl = isConsumer
-      ? 'https://login.live.com/oauth20_token.srf'
-      : 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
-
-    const params = new URLSearchParams();
-    params.append('client_id', client_id || '000000004017045b');
-    params.append('grant_type', 'refresh_token');
-    params.append('refresh_token', refresh_token);
-
-    if (!isConsumer) {
-      params.append('scope', scope || 'https://graph.microsoft.com/.default offline_access');
+    if (req.method !== 'POST') {
+        return new Response('Method not allowed', { status: 405 });
     }
 
-    const response = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: params.toString(),
-    });
+    try {
+        const rawBody = await req.text();
+        const tokenResponse = await fetch('https://login.live.com/oauth20_token.srf', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            },
+            body: rawBody,
+        });
 
-    const data = await response.json();
-    return res.status(response.status).json(data);
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message || 'Internal server error' });
-  }
+        const data = await tokenResponse.json();
+
+        return new Response(JSON.stringify(data), {
+            status: tokenResponse.status,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            }
+        });
+    } catch (error) {
+        return new Response(JSON.stringify({ error: 'Proxy failed to reach Live OAuth' }), {
+            status: 502,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        });
+    }
 }
