@@ -24,6 +24,7 @@ export default async function handler(req: Request) {
     let clientId = '000000004017045b';
     let scope = '';
 
+    // Parsing body baik format JSON maupun x-www-form-urlencoded
     if (contentType.includes('application/json')) {
       const json = await req.json();
       refreshToken = json.refresh_token || '';
@@ -47,7 +48,7 @@ export default async function handler(req: Request) {
       });
     }
 
-    // Deteksi akun personal vs korporat (Entra / Azure AD)
+    // Deteksi akun personal (Live/Hotmail) vs akun Azure AD
     const isConsumer =
       refreshToken.startsWith('M.C') ||
       refreshToken.startsWith('M.R') ||
